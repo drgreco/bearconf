@@ -1,0 +1,142 @@
+#/bin/bash
+#/data/data/com.spartacusrex.spartacuside/files/system/bin/bash
+
+set -e
+
+if [[ ! ${1} ]]; then
+    echo "No host specified"
+    exit 1
+fi
+
+target=${1}
+shift
+target_matches=0
+
+CONFIG_FILE="${HOME}/.ssh/config"
+
+declare -A config
+declare -A global
+
+MIFS=''
+OIFS=${IFS}
+IFS=${MIFS}
+
+declare -a hosts
+
+# loop through config, find options
+while read line
+do
+    if [[ ${line} =~ ^# ]]; then
+        continue
+    elif [ -z ${line} ]; then
+        continue
+    else
+        # check if we have a new Host entry
+        if [[ ${line} =~ ^Host[[:space:]] ]]; then
+
+            target_matches=0
+
+            IFS=${OIFS}
+            hosts=${line##Host[[:space:]]}
+
+            for host in ${hosts}
+            do
+                # hello, is it me you are looking for
+                if [[ "${target}" =~ ${host} ]]; then
+
+                    # see if we've already matched
+                    if [ ! -z ${config[match]} ]; then
+                        # see which is the better match
+                        # prefer things without wildcards
+                        if ! `echo ${host} | grep -q \*`; then
+                            target_matches=1
+                            config[match]=${host}
+
+                        # next best thing is if we are longer than the previous match
+                        elif [[ ${#host} -gt ${#config[match]} ]]; then
+                            target_matches=1
+                            config[match]=${host}
+                        fi
+                            
+                    # this is our first match, sweep the leg
+                    else
+                        target_matches=1
+                        config[match]=${host}
+                    fi
+                fi
+            done
+
+            IFS=${MIFS}
+
+        # look for stray params
+        # save these for later
+        elif [[ ${line} =~ ^[[:alnum:]] ]]; then
+            IFS=${OIFS}
+            declare -a params=( ${line##[[:space:]]} )
+            global[${params[0],,}]=${params[1]}
+            IFS=${MIFS}
+
+        # assume we don't
+        elif [[ ${target_matches} -eq 1 ]]; then 
+            IFS=${OIFS}
+            declare -a params=( ${line##[[:space:]]} )
+            config[${params[0],,}]=${params[1]}
+            IFS=${MIFS}
+        fi
+    fi
+
+
+done < ${CONFIG_FILE}
+
+IFS=${OIFS}
+
+# set our defaults
+declare cmd="/data/data/com.spartacusrex.spartacuside/files/system/bin/ssh"
+declare identity=${HOME}/.ssh/id_rsa
+declare user=$(id -u -n)
+declare remotehost=${target}
+
+# set global options first
+for option in "${!global[@]}"
+do
+    case "${option}" in
+        hostname)
+            remotehost=${global[${option}]}
+            ;;
+        identityfile)
+            identity=${global[${option}]}
+            ;;
+        user)
+            user=${global[${option}]}
+            ;;
+        *)
+            echo "no idea what to do with ${option} -> ${config[${option}]}"
+            ;;
+    esac
+done
+    
+
+# set specific options second
+for option in "${!config[@]}"
+do
+    case "${option}" in
+        hostname)
+            remotehost=${config[${option}]}
+            ;;
+        identityfile)
+            identity=${config[${option}]}
+            ;;
+        user)
+            user=${config[${option}]}
+            ;;
+        match)
+            continue
+            ;;
+        *)
+            echo "no idea what to do with ${option} -> ${config[${option}]}"
+            ;;
+    esac
+done
+    
+echo "${cmd} -i ${identity} ${user}@${remotehost} ${@:1}"
+${cmd} -i ${identity} ${user}@${remotehost} ${@:1}
